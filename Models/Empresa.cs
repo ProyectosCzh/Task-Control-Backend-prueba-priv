@@ -1,0 +1,17 @@
+﻿using taskcontrolv1.Models.Enums;
+
+namespace taskcontrolv1.Models;
+
+public class Empresa
+{
+    public int Id { get; set; }
+    public string Nombre { get; set; } = null!;
+    public string? Direccion { get; set; }
+    public string? Telefono { get; set; }
+    public EstadoEmpresa Estado { get; set; } = EstadoEmpresa.Pending;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+
+    public ICollection<Usuario> Usuarios { get; set; } = new List<Usuario>();
+}

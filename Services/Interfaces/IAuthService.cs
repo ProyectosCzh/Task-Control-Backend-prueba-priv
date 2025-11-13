@@ -8,4 +8,6 @@ public interface IAuthService
     Task<TokenResponseDTO> RefreshAsync(RefreshTokenRequestDTO dto);
     Task LogoutAsync(string refreshToken);
     Task<int> RegisterAdminEmpresaAsync(RegisterAdminEmpresaDTO dto);
+    Task<int> RegisterAdminGeneralAsync(RegisterAdminGeneralDTO dto);
+
 }

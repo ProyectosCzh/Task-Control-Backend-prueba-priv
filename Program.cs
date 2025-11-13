@@ -17,6 +17,7 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
 // Services
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmpresaService, EmpresaService>();
 
 builder.Services.AddControllers();
 
@@ -66,9 +67,14 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+// Swagger
 app.UseSwagger();
 app.UseSwaggerUI();
 
+// Redirigir raíz a Swagger
+app.MapGet("/", () => Results.Redirect("/swagger"));
+
+// Middlewares
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();

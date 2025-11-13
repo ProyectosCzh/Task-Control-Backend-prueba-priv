@@ -6,172 +6,219 @@ using taskcontrolv1.Helpers;
 using taskcontrolv1.Models;
 using taskcontrolv1.Models.Enums;
 using taskcontrolv1.Services.Interfaces;
-//modelo agregado para uso de TokensSwagger
 using System.IdentityModel.Tokens.Jwt;
 
-namespace taskcontrolv1.Services;
-
-public class AuthService : IAuthService
+namespace taskcontrolv1.Services
 {
-    private readonly AppDbContext _db;
-    private readonly ITokenService _tokenSvc;
-    private readonly IConfiguration _config;
-
-    public AuthService(AppDbContext db, ITokenService tokenSvc, IConfiguration config)
+    public class AuthService : IAuthService
     {
-        _db = db;
-        _tokenSvc = tokenSvc;
-        _config = config;
-    }
+        private readonly AppDbContext _db;
+        private readonly ITokenService _tokenSvc;
+        private readonly IConfiguration _config;
 
-    public async Task<LoginResponseDTO> LoginAsync(LoginRequestDTO dto)
-    {
-        var user = await _db.Usuarios.Include(u => u.Empresa).FirstOrDefaultAsync(u => u.Email == dto.Email);
-        if (user is null || !PasswordHasher.VerifyPassword(dto.Password, user.PasswordHash, user.PasswordSalt))
-            throw new UnauthorizedAccessException("Credenciales inválidas");
-
-        // Validación de scope empresa:
-        if (user.Rol == RolUsuario.AdminEmpresa || user.Rol == RolUsuario.Usuario)
+        public AuthService(AppDbContext db, ITokenService tokenSvc, IConfiguration config)
         {
-            if (dto.EmpresaId is null || user.EmpresaId != dto.EmpresaId)
-                throw new UnauthorizedAccessException("Empresa inválida para el usuario");
-
-            // AdminEmpresa solo puede loguear si Empresa Approved
-            if (user.Rol == RolUsuario.AdminEmpresa && user.Empresa!.Estado != EstadoEmpresa.Approved)
-                throw new UnauthorizedAccessException("Empresa no aprobada aún");
+            _db = db;
+            _tokenSvc = tokenSvc;
+            _config = config;
         }
 
-        // Claims
-        var accessMinutes = int.Parse(_config["JwtSettings:AccessTokenExpirationMinutes"]!);
-        var expiresAt = DateTime.UtcNow.AddMinutes(accessMinutes);
-
-        var claims = new List<Claim>
+        // ======================================================
+        // LOGIN
+        // ======================================================
+        public async Task<LoginResponseDTO> LoginAsync(LoginRequestDTO dto)
         {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(ClaimTypes.Role, user.Rol.ToString()),
-        };
-        if (user.EmpresaId.HasValue)
-            claims.Add(new("empresaId", user.EmpresaId.Value.ToString()));
+            var user = await _db.Usuarios.Include(u => u.Empresa)
+                .FirstOrDefaultAsync(u => u.Email == dto.Email);
 
-        var accessToken = _tokenSvc.CreateAccessToken(claims, expiresAt);
+            if (user is null || !PasswordHasher.VerifyPassword(dto.Password, user.PasswordHash, user.PasswordSalt))
+                throw new UnauthorizedAccessException("Credenciales inválidas");
 
-        // Refresh
-        var refreshDays = int.Parse(_config["JwtSettings:RefreshTokenExpirationDays"]!);
-        var (plainRt, hashRt) = _tokenSvc.CreateRefreshToken();
-        var rt = new RefreshToken
+            // Validación de scope empresa
+            if (user.Rol == RolUsuario.AdminEmpresa || user.Rol == RolUsuario.Usuario)
+            {
+                if (dto.EmpresaId is null || user.EmpresaId != dto.EmpresaId)
+                    throw new UnauthorizedAccessException("Empresa inválida para el usuario");
+
+                if (user.Rol == RolUsuario.AdminEmpresa && user.Empresa!.Estado != EstadoEmpresa.Approved)
+                    throw new UnauthorizedAccessException("Empresa no aprobada aún");
+            }
+
+            // Claims
+            var accessMinutes = int.Parse(_config["JwtSettings:AccessTokenExpirationMinutes"]!);
+            var expiresAt = DateTime.UtcNow.AddMinutes(accessMinutes);
+
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new(ClaimTypes.Role, user.Rol.ToString()),
+            };
+
+            if (user.EmpresaId.HasValue)
+                claims.Add(new("empresaId", user.EmpresaId.Value.ToString()));
+
+            var accessToken = _tokenSvc.CreateAccessToken(claims, expiresAt);
+
+            // Refresh token
+            var refreshDays = int.Parse(_config["JwtSettings:RefreshTokenExpirationDays"]!);
+            var (plainRt, hashRt) = _tokenSvc.CreateRefreshToken();
+
+            var rt = new RefreshToken
+            {
+                UsuarioId = user.Id,
+                TokenHash = hashRt,
+                ExpiresAt = DateTime.UtcNow.AddDays(refreshDays)
+            };
+
+            _db.RefreshTokens.Add(rt);
+            await _db.SaveChangesAsync();
+
+            return new LoginResponseDTO
+            {
+                Tokens = new TokenResponseDTO
+                {
+                    AccessToken = accessToken,
+                    RefreshToken = plainRt,
+                    ExpiresIn = accessMinutes * 60
+                },
+                Usuario = new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    nombreCompleto = user.NombreCompleto,
+                    rol = user.Rol.ToString(),
+                    empresaId = user.EmpresaId
+                }
+            };
+        }
+
+        // ======================================================
+        // REFRESH TOKEN
+        // ======================================================
+        public async Task<TokenResponseDTO> RefreshAsync(RefreshTokenRequestDTO dto)
         {
-            UsuarioId = user.Id,
-            TokenHash = hashRt,
-            ExpiresAt = DateTime.UtcNow.AddDays(refreshDays)
-        };
-        _db.RefreshTokens.Add(rt);
-        await _db.SaveChangesAsync();
+            var hash = _tokenSvc.HashRefreshToken(dto.RefreshToken);
+            var stored = await _db.RefreshTokens.Include(r => r.Usuario)
+                .FirstOrDefaultAsync(r => r.TokenHash == hash);
 
-        return new LoginResponseDTO
-        {
-            Tokens = new TokenResponseDTO
+            if (stored is null || stored.IsRevoked || stored.ExpiresAt <= DateTime.UtcNow)
+                throw new UnauthorizedAccessException("Refresh token inválido");
+
+            var user = stored.Usuario;
+            var accessMinutes = int.Parse(_config["JwtSettings:AccessTokenExpirationMinutes"]!);
+            var expiresAt = DateTime.UtcNow.AddMinutes(accessMinutes);
+
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new(ClaimTypes.Role, user.Rol.ToString()),
+            };
+
+            if (user.EmpresaId.HasValue)
+                claims.Add(new("empresaId", user.EmpresaId.Value.ToString()));
+
+            var accessToken = _tokenSvc.CreateAccessToken(claims, expiresAt);
+
+            // Rotación de refresh token
+            stored.IsRevoked = true;
+            stored.RevokedAt = DateTime.UtcNow;
+            stored.RevokeReason = "rotated";
+
+            var refreshDays = int.Parse(_config["JwtSettings:RefreshTokenExpirationDays"]!);
+            var (plainRt, hashRt) = _tokenSvc.CreateRefreshToken();
+
+            _db.RefreshTokens.Add(new RefreshToken
+            {
+                UsuarioId = user.Id,
+                TokenHash = hashRt,
+                ExpiresAt = DateTime.UtcNow.AddDays(refreshDays)
+            });
+
+            await _db.SaveChangesAsync();
+
+            return new TokenResponseDTO
             {
                 AccessToken = accessToken,
                 RefreshToken = plainRt,
                 ExpiresIn = accessMinutes * 60
-            },
-            Usuario = new {
-                id = user.Id,
-                email = user.Email,
-                nombreCompleto = user.NombreCompleto,
-                rol = user.Rol.ToString(),
-                empresaId = user.EmpresaId
-            }
-        };
-    }
+            };
+        }
 
-    public async Task<TokenResponseDTO> RefreshAsync(RefreshTokenRequestDTO dto)
-    {
-        var hash = _tokenSvc.HashRefreshToken(dto.RefreshToken);
-        var stored = await _db.RefreshTokens.Include(r => r.Usuario)
-            .FirstOrDefaultAsync(r => r.TokenHash == hash);
-
-        if (stored is null || stored.IsRevoked || stored.ExpiresAt <= DateTime.UtcNow)
-            throw new UnauthorizedAccessException("Refresh token inválido");
-
-        var user = stored.Usuario;
-
-        var accessMinutes = int.Parse(_config["JwtSettings:AccessTokenExpirationMinutes"]!);
-        var expiresAt = DateTime.UtcNow.AddMinutes(accessMinutes);
-
-        var claims = new List<Claim>
+        // LOGOUT
+        public async Task LogoutAsync(string refreshToken)
         {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(ClaimTypes.Role, user.Rol.ToString()),
-        };
-        if (user.EmpresaId.HasValue)
-            claims.Add(new("empresaId", user.EmpresaId.Value.ToString()));
+            var hash = _tokenSvc.HashRefreshToken(refreshToken);
+            var stored = await _db.RefreshTokens.FirstOrDefaultAsync(r => r.TokenHash == hash);
+            if (stored is null) return;
 
-        var accessToken = _tokenSvc.CreateAccessToken(claims, expiresAt);
+            stored.IsRevoked = true;
+            stored.RevokedAt = DateTime.UtcNow;
+            stored.RevokeReason = "logout";
+            await _db.SaveChangesAsync();
+        }
 
-        // Rotación de refresh (opcional): emitir uno nuevo y revocar el antiguo
-        stored.IsRevoked = true;
-        stored.RevokedAt = DateTime.UtcNow;
-        stored.RevokeReason = "rotated";
-
-        var refreshDays = int.Parse(_config["JwtSettings:RefreshTokenExpirationDays"]!);
-        var (plainRt, hashRt) = _tokenSvc.CreateRefreshToken();
-        _db.RefreshTokens.Add(new RefreshToken
+        // REGISTRO ADMIN EMPRESA
+        public async Task<int> RegisterAdminEmpresaAsync(RegisterAdminEmpresaDTO dto)
         {
-            UsuarioId = user.Id,
-            TokenHash = hashRt,
-            ExpiresAt = DateTime.UtcNow.AddDays(refreshDays)
-        });
-        await _db.SaveChangesAsync();
+            // 1) Crear empresa en Pending
+            var empresa = new Empresa
+            {
+                Nombre = dto.NombreEmpresa,
+                Direccion = dto.DireccionEmpresa,
+                Telefono = dto.TelefonoEmpresa
+            };
+            _db.Empresas.Add(empresa);
+            await _db.SaveChangesAsync();
 
-        return new TokenResponseDTO
+            // 2) Crear usuario AdminEmpresa asociado
+            PasswordHasher.CreatePasswordHash(dto.Password, out var hash, out var salt);
+
+            var user = new Usuario
+            {
+                Email = dto.Email,
+                NombreCompleto = dto.NombreCompleto,
+                Telefono = dto.Telefono,
+                PasswordHash = hash,
+                PasswordSalt = salt,
+                Rol = RolUsuario.AdminEmpresa,
+                EmpresaId = empresa.Id
+            };
+
+            _db.Usuarios.Add(user);
+            await _db.SaveChangesAsync();
+
+            return empresa.Id;
+        }
+
+        // REGISTRO ADMIN GENERAL (SUPERADMIN)
+        public async Task<int> RegisterAdminGeneralAsync(RegisterAdminGeneralDTO dto)
         {
-            AccessToken = accessToken,
-            RefreshToken = plainRt,
-            ExpiresIn = accessMinutes * 60
-        };
-    }
+            // 1️ Verificar si ya existe un AdminGeneral
+            var yaExisteAdminGeneral = await _db.Usuarios.AnyAsync(u => u.Rol == RolUsuario.AdminGeneral);
 
-    public async Task LogoutAsync(string refreshToken)
-    {
-        var hash = _tokenSvc.HashRefreshToken(refreshToken);
-        var stored = await _db.RefreshTokens.FirstOrDefaultAsync(r => r.TokenHash == hash);
-        if (stored is null) return;
+            // 2️ (Regla de bootstrap): 
+            // Si no existe ningún AdminGeneral, se permite crear el primero sin autenticación.
+            // Si ya existe, se valida en el Controller que el usuario autenticado sea AdminGeneral.
 
-        stored.IsRevoked = true;
-        stored.RevokedAt = DateTime.UtcNow;
-        stored.RevokeReason = "logout";
-        await _db.SaveChangesAsync();
-    }
+            // 3️ Crear hash de contraseña
+            PasswordHasher.CreatePasswordHash(dto.Password, out var hash, out var salt);
 
-    public async Task<int> RegisterAdminEmpresaAsync(RegisterAdminEmpresaDTO dto)
-    {
-        // 1) Crear empresa en Pending
-        var empresa = new Empresa
-        {
-            Nombre = dto.NombreEmpresa,
-            Direccion = dto.DireccionEmpresa,
-            Telefono = dto.TelefonoEmpresa
-        };
-        _db.Empresas.Add(empresa);
-        await _db.SaveChangesAsync();
+            // 4️ Crear usuario AdminGeneral
+            var user = new Usuario
+            {
+                Email = dto.Email,
+                NombreCompleto = dto.NombreCompleto,
+                Telefono = dto.Telefono,
+                PasswordHash = hash,
+                PasswordSalt = salt,
+                Rol = RolUsuario.AdminGeneral,
+                EmpresaId = null
+            };
 
-        // 2) Crear usuario AdminEmpresa asociado
-        PasswordHasher.CreatePasswordHash(dto.Password, out var hash, out var salt);
+            _db.Usuarios.Add(user);
+            await _db.SaveChangesAsync();
 
-        var user = new Usuario
-        {
-            Email = dto.Email,
-            NombreCompleto = dto.NombreCompleto,
-            Telefono = dto.Telefono,
-            PasswordHash = hash,
-            PasswordSalt = salt,
-            Rol = RolUsuario.AdminEmpresa,
-            EmpresaId = empresa.Id
-        };
-        _db.Usuarios.Add(user);
-        await _db.SaveChangesAsync();
-
-        return empresa.Id;
+            return user.Id;
+        }
     }
 }

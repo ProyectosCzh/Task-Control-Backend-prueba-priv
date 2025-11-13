@@ -18,7 +18,7 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IEmpresaService, EmpresaService>();
-
+builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddControllers();
 
 // JWT
@@ -42,6 +42,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
+
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>

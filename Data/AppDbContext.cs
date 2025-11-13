@@ -10,7 +10,8 @@ public class AppDbContext : DbContext
     public DbSet<Empresa> Empresas => Set<Empresa>();
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
-
+    public DbSet<Capacidad> Capacidades => Set<Capacidad>();
+    public DbSet<UsuarioCapacidad> UsuarioCapacidades => Set<UsuarioCapacidad>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
@@ -19,4 +20,5 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Empresa>().HasQueryFilter(e => e.IsActive);
         modelBuilder.Entity<Usuario>().HasQueryFilter(u => u.IsActive);
     }
+    
 }

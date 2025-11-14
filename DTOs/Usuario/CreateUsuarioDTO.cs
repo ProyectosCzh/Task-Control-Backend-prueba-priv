@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿// DTOs/Usuario/CreateUsuarioDTO.cs
+using System.ComponentModel.DataAnnotations;
 using taskcontrolv1.Models.Enums;
 
 namespace taskcontrolv1.DTOs.Usuario;
@@ -9,15 +10,7 @@ public class CreateUsuarioDTO
     [Required, MinLength(8)] public string Password { get; set; } = null!;
     [Required] public string NombreCompleto { get; set; } = null!;
     public string? Telefono { get; set; }
+
     public Departamento? Departamento { get; set; }
-    [Range(1,5)] public int? NivelHabilidad { get; set; }
-
-    // Ids de capacidades de ESTA empresa, con nivel 1..5
-    public List<CapacidadNivelItem> Capacidades { get; set; } = new();
-}
-
-public class CapacidadNivelItem
-{
-    public int CapacidadId { get; set; }
-    [Range(1,5)] public int Nivel { get; set; } = 1;
+    [Range(1,5)] public int? NivelHabilidad { get; set; }   // Nivel global del trabajador
 }

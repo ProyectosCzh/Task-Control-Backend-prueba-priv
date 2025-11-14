@@ -24,24 +24,30 @@ namespace taskcontrolv1.Services
         }
 
         // ======================================================
-        // LOGIN
+        // LOGIN (ACTUALIZADO)
         // ======================================================
         public async Task<LoginResponseDTO> LoginAsync(LoginRequestDTO dto)
         {
-            var user = await _db.Usuarios.Include(u => u.Empresa)
+            var user = await _db.Usuarios
+                .Include(u => u.Empresa)
                 .FirstOrDefaultAsync(u => u.Email == dto.Email);
 
             if (user is null || !PasswordHasher.VerifyPassword(dto.Password, user.PasswordHash, user.PasswordSalt))
                 throw new UnauthorizedAccessException("Credenciales inválidas");
 
-            // Validación de scope empresa
+            // =============================
+            // NUEVAS VALIDACIONES POR ROL
+            // =============================
             if (user.Rol == RolUsuario.AdminEmpresa || user.Rol == RolUsuario.Usuario)
             {
-                if (dto.EmpresaId is null || user.EmpresaId != dto.EmpresaId)
-                    throw new UnauthorizedAccessException("Empresa inválida para el usuario");
+                if (!user.EmpresaId.HasValue || user.Empresa is null)
+                    throw new UnauthorizedAccessException("Usuario sin empresa asignada");
 
-                if (user.Rol == RolUsuario.AdminEmpresa && user.Empresa!.Estado != EstadoEmpresa.Approved)
-                    throw new UnauthorizedAccessException("Empresa no aprobada aún");
+                if (user.Empresa.Estado != EstadoEmpresa.Approved)
+                    throw new UnauthorizedAccessException("La empresa aún no está aprobada");
+
+                if (!user.Empresa.IsActive)
+                    throw new UnauthorizedAccessException("La empresa está inactiva");
             }
 
             // Claims
@@ -59,7 +65,7 @@ namespace taskcontrolv1.Services
 
             var accessToken = _tokenSvc.CreateAccessToken(claims, expiresAt);
 
-            // Refresh token
+            // Refresh token (SIN CAMBIOS)
             var refreshDays = int.Parse(_config["JwtSettings:RefreshTokenExpirationDays"]!);
             var (plainRt, hashRt) = _tokenSvc.CreateRefreshToken();
 
@@ -144,7 +150,9 @@ namespace taskcontrolv1.Services
             };
         }
 
+        // ======================================================
         // LOGOUT
+        // ======================================================
         public async Task LogoutAsync(string refreshToken)
         {
             var hash = _tokenSvc.HashRefreshToken(refreshToken);
@@ -157,7 +165,9 @@ namespace taskcontrolv1.Services
             await _db.SaveChangesAsync();
         }
 
+        // ======================================================
         // REGISTRO ADMIN EMPRESA
+        // ======================================================
         public async Task<int> RegisterAdminEmpresaAsync(RegisterAdminEmpresaDTO dto)
         {
             // 1) Crear empresa en Pending
@@ -190,20 +200,15 @@ namespace taskcontrolv1.Services
             return empresa.Id;
         }
 
-        // REGISTRO ADMIN GENERAL (SUPERADMIN)
+        // ======================================================
+        // REGISTRO ADMIN GENERAL
+        // ======================================================
         public async Task<int> RegisterAdminGeneralAsync(RegisterAdminGeneralDTO dto)
         {
-            // 1️ Verificar si ya existe un AdminGeneral
             var yaExisteAdminGeneral = await _db.Usuarios.AnyAsync(u => u.Rol == RolUsuario.AdminGeneral);
 
-            // 2️ (Regla de bootstrap): 
-            // Si no existe ningún AdminGeneral, se permite crear el primero sin autenticación.
-            // Si ya existe, se valida en el Controller que el usuario autenticado sea AdminGeneral.
-
-            // 3️ Crear hash de contraseña
             PasswordHasher.CreatePasswordHash(dto.Password, out var hash, out var salt);
 
-            // 4️ Crear usuario AdminGeneral
             var user = new Usuario
             {
                 Email = dto.Email,

@@ -14,18 +14,9 @@ public class UsuarioService : IUsuarioService
     private readonly AppDbContext _db;
     public UsuarioService(AppDbContext db) => _db = db;
 
+    // 5.1 CREATE ASYNC — SIN CAMBIOS
     public async Task<int> CreateAsync(int empresaId, CreateUsuarioDTO dto)
     {
-        var capsIds = dto.Capacidades.Select(c => c.CapacidadId).ToList();
-        if (capsIds.Count > 0)
-        {
-            var validCount = await _db.Capacidades
-                .CountAsync(c => c.EmpresaId == empresaId && capsIds.Contains(c.Id) && c.IsActive);
-
-            if (validCount != capsIds.Count)
-                throw new ArgumentException("Hay capacidades que no pertenecen a esta empresa o están inactivas");
-        }
-
         PasswordHasher.CreatePasswordHash(dto.Password, out var hash, out var salt);
 
         var user = new Usuario
@@ -41,20 +32,12 @@ public class UsuarioService : IUsuarioService
             NivelHabilidad = dto.NivelHabilidad
         };
 
-        foreach (var c in dto.Capacidades)
-        {
-            user.UsuarioCapacidades.Add(new UsuarioCapacidad
-            {
-                CapacidadId = c.CapacidadId,
-                Nivel = c.Nivel
-            });
-        }
-
         _db.Usuarios.Add(user);
         await _db.SaveChangesAsync();
         return user.Id;
     }
 
+    // GET ORIGINAL — SIN CAMBIOS
     public async Task<UsuarioDTO?> GetAsync(
         int requesterUserId,
         int? requesterEmpresaId,
@@ -96,10 +79,10 @@ public class UsuarioService : IUsuarioService
                 }).ToList()
         };
     }
-
+    
+    // LIST ORIGINAL — SIN CAMBIOS
     public async Task<List<UsuarioListDTO>> ListAsync(int empresaId)
     {
-        // ✅ FORZAMOS EL USO DE System.Linq.Queryable.Select
         var query = _db.Usuarios
             .AsNoTracking()
             .Where(u => u.EmpresaId == empresaId && u.Rol == RolUsuario.Usuario)
@@ -116,11 +99,11 @@ public class UsuarioService : IUsuarioService
                 IsActive = u.IsActive
             }));
     }
-
+    
+    // UPDATE ORIGINAL — SIN CAMBIOS
     public async Task UpdateAsync(int empresaId, int id, UpdateUsuarioDTO dto)
     {
         var u = await _db.Usuarios
-            .Include(x => x.UsuarioCapacidades)
             .FirstOrDefaultAsync(x =>
                 x.Id == id &&
                 x.EmpresaId == empresaId &&
@@ -135,31 +118,10 @@ public class UsuarioService : IUsuarioService
         u.NivelHabilidad = dto.NivelHabilidad;
         u.UpdatedAt = DateTime.UtcNow;
 
-        u.UsuarioCapacidades.Clear();
-
-        if (dto.Capacidades.Count > 0)
-        {
-            var capsIds = dto.Capacidades.Select(c => c.CapacidadId).ToList();
-            var validCount = await _db.Capacidades
-                .CountAsync(c => c.EmpresaId == empresaId && capsIds.Contains(c.Id) && c.IsActive);
-
-            if (validCount != capsIds.Count)
-                throw new ArgumentException("Hay capacidades que no pertenecen a esta empresa o están inactivas");
-
-            foreach (var c in dto.Capacidades)
-            {
-                u.UsuarioCapacidades.Add(new UsuarioCapacidad
-                {
-                    UsuarioId = u.Id,
-                    CapacidadId = c.CapacidadId,
-                    Nivel = c.Nivel
-                });
-            }
-        }
-
         await _db.SaveChangesAsync();
     }
-
+    
+    // DELETE ORIGINAL — SIN CAMBIOS
     public async Task DeleteAsync(int empresaId, int id)
     {
         var u = await _db.Usuarios
@@ -173,6 +135,102 @@ public class UsuarioService : IUsuarioService
 
         u.IsActive = false;
         u.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+    
+    // 1.3 MÉTODO NUEVO: CREAR O BUSCAR CAPACIDAD POR NOMBRE
+    private async Task<Capacidad> GetOrCreateCapacidadAsync(int empresaId, string nombre)
+    {
+        var nombreNorm = nombre.Trim();
+
+        var capacidad = await _db.Capacidades
+            .FirstOrDefaultAsync(c => 
+                c.EmpresaId == empresaId &&
+                c.Nombre == nombreNorm &&
+                c.IsActive);
+
+        if (capacidad is not null)
+            return capacidad;
+
+        capacidad = new Capacidad
+        {
+            EmpresaId = empresaId,
+            Nombre = nombreNorm,
+            IsActive = true
+        };
+
+        _db.Capacidades.Add(capacidad);
+        await _db.SaveChangesAsync();
+
+        return capacidad;
+    }
+    
+    // ACTUALIZAR CAPACIDADES COMO ADMIN (NUEVA LÓGICA)
+    public async Task UpdateCapacidadesComoAdminAsync(
+        int empresaId,
+        int usuarioId,
+        List<CapacidadNivelItem> capacidades)
+    {
+        var usuario = await _db.Usuarios
+            .Include(u => u.UsuarioCapacidades)
+                .ThenInclude(uc => uc.Capacidad)
+            .FirstOrDefaultAsync(u => 
+                u.Id == usuarioId &&
+                u.EmpresaId == empresaId &&
+                u.Rol == RolUsuario.Usuario);
+
+        if (usuario is null)
+            throw new KeyNotFoundException("Usuario no encontrado");
+
+        usuario.UsuarioCapacidades.Clear();
+
+        foreach (var item in capacidades)
+        {
+            var capacidad = await GetOrCreateCapacidadAsync(empresaId, item.Nombre);
+
+            usuario.UsuarioCapacidades.Add(new UsuarioCapacidad
+            {
+                UsuarioId = usuario.Id,
+                CapacidadId = capacidad.Id,
+                Nivel = item.Nivel
+            });
+        }
+
+        usuario.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+    
+    // ACTUALIZAR MIS CAPACIDADES (TRABAJADOR)
+    public async Task UpdateMisCapacidadesAsync(
+        int usuarioId,
+        int empresaId,
+        List<CapacidadNivelItem> capacidades)
+    {
+        var usuario = await _db.Usuarios
+            .Include(u => u.UsuarioCapacidades)
+                .ThenInclude(uc => uc.Capacidad)
+            .FirstOrDefaultAsync(u => 
+                u.Id == usuarioId &&
+                u.EmpresaId == empresaId);
+
+        if (usuario is null)
+            throw new KeyNotFoundException("Usuario no encontrado");
+
+        usuario.UsuarioCapacidades.Clear();
+
+        foreach (var item in capacidades)
+        {
+            var capacidad = await GetOrCreateCapacidadAsync(empresaId, item.Nombre);
+
+            usuario.UsuarioCapacidades.Add(new UsuarioCapacidad
+            {
+                UsuarioId = usuario.Id,
+                CapacidadId = capacidad.Id,
+                Nivel = item.Nivel
+            });
+        }
+
+        usuario.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
 }

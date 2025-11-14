@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿// DTOs/Usuario/UpdateUsuarioDTO.cs
+using System.ComponentModel.DataAnnotations;
 using taskcontrolv1.Models.Enums;
 
 namespace taskcontrolv1.DTOs.Usuario;
@@ -9,5 +10,4 @@ public class UpdateUsuarioDTO
     public string? Telefono { get; set; }
     public Departamento? Departamento { get; set; }
     [Range(1,5)] public int? NivelHabilidad { get; set; }
-    public List<CapacidadNivelItem> Capacidades { get; set; } = new();
 }

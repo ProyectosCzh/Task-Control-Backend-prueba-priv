@@ -15,7 +15,7 @@ public class Usuario
     public int? EmpresaId { get; set; }
     public Empresa? Empresa { get; set; }
 
-    // 🔹 NUEVOS CAMPOS PARA TRABAJADOR
+    // NUEVOS CAMPOS PARA TRABAJADOR
     public Departamento? Departamento { get; set; }      // De qué área es
     public int? NivelHabilidad { get; set; }             // 1..5, por ejemplo
 

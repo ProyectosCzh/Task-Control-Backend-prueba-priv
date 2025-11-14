@@ -1,12 +1,13 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using System.Threading.Tasks;
 using taskcontrolv1.Data;
 using taskcontrolv1.DTOs.Empresa;
 using taskcontrolv1.Models.Enums;
 using taskcontrolv1.Services.Interfaces;
 using taskcontrolv1.Filters;
-using System.Threading.Tasks;
 
 namespace taskcontrolv1.Controllers
 {
@@ -24,14 +25,41 @@ namespace taskcontrolv1.Controllers
             _svc = svc;
         }
 
-        // GET /api/empresas?estado=Approved|Pending|Rejected
+        // Helper para verificar rol AdminGeneral
+        private bool IsAdminGeneral() =>
+            string.Equals(
+                User.FindFirstValue(ClaimTypes.Role),
+                RolUsuario.AdminGeneral.ToString(),
+                StringComparison.Ordinal
+            );
+
+        // Helper para verificar rol AdminEmpresa
+        private bool IsAdminEmpresa() =>
+            string.Equals(
+                User.FindFirstValue(ClaimTypes.Role),
+                RolUsuario.AdminEmpresa.ToString(),
+                StringComparison.Ordinal
+            );
+
+        // Helper para obtener empresaId desde el token
+        private int? EmpresaIdClaim()
+        {
+            var v = User.FindFirst("empresaId")?.Value;
+            if (int.TryParse(v, out var id))
+                return id;
+            return null;
+        }
+
         [HttpGet]
         [AuthorizeRole(RolUsuario.AdminGeneral)]
         public async Task<IActionResult> List([FromQuery] string? estado = null)
         {
             var query = _db.Empresas.AsNoTracking().AsQueryable();
-            if (!string.IsNullOrWhiteSpace(estado) && Enum.TryParse<EstadoEmpresa>(estado, true, out var st))
+            if (!string.IsNullOrWhiteSpace(estado) &&
+                Enum.TryParse<EstadoEmpresa>(estado, true, out var st))
+            {
                 query = query.Where(e => e.Estado == st);
+            }
 
             var list = await query
                 .OrderByDescending(e => e.CreatedAt)
@@ -46,7 +74,6 @@ namespace taskcontrolv1.Controllers
             return Ok(new { success = true, data = list });
         }
 
-        // PUT /api/empresas/{id}/aprobar
         [HttpPut("{id:int}/aprobar")]
         [AuthorizeRole(RolUsuario.AdminGeneral)]
         public async Task<IActionResult> Aprobar([FromRoute] int id)
@@ -55,7 +82,6 @@ namespace taskcontrolv1.Controllers
             return Ok(new { success = true, message = "Empresa aprobada exitosamente" });
         }
 
-        // PUT /api/empresas/{id}/rechazar
         [HttpPut("{id:int}/rechazar")]
         [AuthorizeRole(RolUsuario.AdminGeneral)]
         public async Task<IActionResult> Rechazar([FromRoute] int id)
@@ -64,30 +90,59 @@ namespace taskcontrolv1.Controllers
             return Ok(new { success = true, message = "Empresa rechazada exitosamente" });
         }
 
-        // GET /api/empresas/{id}/estadisticas  (pendiente de completar en siguiente iteración)
+        // GET /api/empresas/{id}/estadisticas
+        // AdminGeneral: puede ver todas
+        // AdminEmpresa: solo su propia empresa
         [HttpGet("{id:int}/estadisticas")]
-        [Authorize] // AdminGeneral o AdminEmpresa dueño
+        [Authorize]
         public async Task<IActionResult> Estadisticas([FromRoute] int id)
         {
-            var empresa = await _db.Empresas.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id);
-            if (empresa is null) return NotFound();
+            var empresa = await _db.Empresas
+                .AsNoTracking()
+                .FirstOrDefaultAsync(e => e.Id == id);
 
-            var mock = new
+            if (empresa is null)
+                return NotFound();
+
+            // Autorización
+            if (!IsAdminGeneral())
             {
-                empresaId = id,
-                totalTrabajadores = 0,
-                trabajadoresActivos = 0,
-                totalTareas = 0,
-                tareasPendientes = 0,
-                tareasAsignadas = 0,
-                tareasAceptadas = 0,
-                tareasFinalizadas = 0,
-                tareasCanceladas = 0
+                if (!IsAdminEmpresa())
+                    return Forbid();
+
+                var empresaToken = EmpresaIdClaim();
+                if (!empresaToken.HasValue || empresaToken.Value != id)
+                    return Forbid();
+            }
+
+            // Total de trabajadores
+            var totalTrabajadores = await _db.Usuarios
+                .CountAsync(u => u.EmpresaId == id && u.Rol == RolUsuario.Usuario);
+
+            // Trabajadores activos
+            var trabajadoresActivos = await _db.Usuarios
+                .CountAsync(u => u.EmpresaId == id &&
+                                 u.Rol == RolUsuario.Usuario &&
+                                 u.IsActive);
+
+            // Las estadísticas de tareas quedan en 0 por ahora
+            var dto = new EmpresaEstadisticasDTO
+            {
+                EmpresaId = id,
+                NombreEmpresa = empresa.Nombre,
+                TotalTrabajadores = totalTrabajadores,
+                TrabajadoresActivos = trabajadoresActivos,
+                TotalTareas = 0,
+                TareasPendientes = 0,
+                TareasAsignadas = 0,
+                TareasAceptadas = 0,
+                TareasFinalizadas = 0,
+                TareasCanceladas = 0
             };
-            return Ok(new { success = true, data = mock });
+
+            return Ok(new { success = true, data = dto });
         }
 
-        // DELETE /api/empresas/{id}
         [HttpDelete("{id:int}")]
         [AuthorizeRole(RolUsuario.AdminGeneral)]
         public async Task<IActionResult> HardDelete([FromRoute] int id)

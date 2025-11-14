@@ -24,20 +24,22 @@ namespace taskcontrolv1.Services
         }
 
         // ======================================================
-        // LOGIN (ACTUALIZADO)
+        // LOGIN
         // ======================================================
         public async Task<LoginResponseDTO> LoginAsync(LoginRequestDTO dto)
         {
+            var normalizedEmail = dto.Email.Trim().ToLower();
+
+            // Consulta de solo lectura, incluye la empresa
             var user = await _db.Usuarios
+                .AsNoTracking()
                 .Include(u => u.Empresa)
-                .FirstOrDefaultAsync(u => u.Email == dto.Email);
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
 
             if (user is null || !PasswordHasher.VerifyPassword(dto.Password, user.PasswordHash, user.PasswordSalt))
                 throw new UnauthorizedAccessException("Credenciales inválidas");
 
-            // =============================
-            // NUEVAS VALIDACIONES POR ROL
-            // =============================
+            // Validaciones según rol
             if (user.Rol == RolUsuario.AdminEmpresa || user.Rol == RolUsuario.Usuario)
             {
                 if (!user.EmpresaId.HasValue || user.Empresa is null)
@@ -65,7 +67,7 @@ namespace taskcontrolv1.Services
 
             var accessToken = _tokenSvc.CreateAccessToken(claims, expiresAt);
 
-            // Refresh token (SIN CAMBIOS)
+            // Refresh token
             var refreshDays = int.Parse(_config["JwtSettings:RefreshTokenExpirationDays"]!);
             var (plainRt, hashRt) = _tokenSvc.CreateRefreshToken();
 
@@ -104,7 +106,8 @@ namespace taskcontrolv1.Services
         public async Task<TokenResponseDTO> RefreshAsync(RefreshTokenRequestDTO dto)
         {
             var hash = _tokenSvc.HashRefreshToken(dto.RefreshToken);
-            var stored = await _db.RefreshTokens.Include(r => r.Usuario)
+            var stored = await _db.RefreshTokens
+                .Include(r => r.Usuario)
                 .FirstOrDefaultAsync(r => r.TokenHash == hash);
 
             if (stored is null || stored.IsRevoked || stored.ExpiresAt <= DateTime.UtcNow)
@@ -170,6 +173,12 @@ namespace taskcontrolv1.Services
         // ======================================================
         public async Task<int> RegisterAdminEmpresaAsync(RegisterAdminEmpresaDTO dto)
         {
+            var normalizedEmail = dto.Email.Trim().ToLower();
+
+            // Validar duplicado
+            if (await _db.Usuarios.AnyAsync(u => u.Email.ToLower() == normalizedEmail))
+                throw new InvalidOperationException("El email ya está registrado");
+
             // 1) Crear empresa en Pending
             var empresa = new Empresa
             {
@@ -185,7 +194,7 @@ namespace taskcontrolv1.Services
 
             var user = new Usuario
             {
-                Email = dto.Email,
+                Email = normalizedEmail,
                 NombreCompleto = dto.NombreCompleto,
                 Telefono = dto.Telefono,
                 PasswordHash = hash,
@@ -205,13 +214,17 @@ namespace taskcontrolv1.Services
         // ======================================================
         public async Task<int> RegisterAdminGeneralAsync(RegisterAdminGeneralDTO dto)
         {
-            var yaExisteAdminGeneral = await _db.Usuarios.AnyAsync(u => u.Rol == RolUsuario.AdminGeneral);
+            var normalizedEmail = dto.Email.Trim().ToLower();
+
+            // Validar duplicado
+            if (await _db.Usuarios.AnyAsync(u => u.Email.ToLower() == normalizedEmail))
+                throw new InvalidOperationException("El email ya está registrado");
 
             PasswordHasher.CreatePasswordHash(dto.Password, out var hash, out var salt);
 
             var user = new Usuario
             {
-                Email = dto.Email,
+                Email = normalizedEmail,
                 NombreCompleto = dto.NombreCompleto,
                 Telefono = dto.Telefono,
                 PasswordHash = hash,

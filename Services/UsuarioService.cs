@@ -37,7 +37,7 @@ public class UsuarioService : IUsuarioService
         return user.Id;
     }
 
-    // OBTIENE UN USUARIO POR ID CON SUS CAPACIDADES, CONTROL DE PERMISOS
+    // OBTIENE UN USUARIO POR ID CON SUS CAPACIDADES Y CONTROL DE PERMISOS
     public async Task<UsuarioDTO?> GetAsync(
         int requesterUserId,
         int? requesterEmpresaId,

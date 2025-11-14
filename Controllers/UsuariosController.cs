@@ -177,4 +177,29 @@ public class UsuariosController : ControllerBase
 
         return Ok(new { success = true, message = "Tus capacidades han sido actualizadas" });
     }
+    
+    // DELETE api/usuarios/mis-capacidades/{capacidadId}
+    // Todos los roles autenticados pueden usarlo (AdminGeneral, AdminEmpresa, Usuario)
+    [HttpDelete("mis-capacidades/{capacidadId:int}")]
+    [Authorize]  // ya está a nivel de controlador
+    public async Task<IActionResult> DeleteMiCapacidad([FromRoute] int capacidadId)
+    {
+        var empresaId = EmpresaIdClaim();
+        if (empresaId is null)
+            return BadRequest(new { success = false, message = "El usuario no tiene empresa asociada" });
+
+        var userId = UserId();
+
+        try
+        {
+            await _svc.DeleteMisCapacidadAsync(userId, empresaId.Value, capacidadId);
+            return Ok(new { success = true, message = "Capacidad eliminada de tu perfil" });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { success = false, message = ex.Message });
+        }
+    }
+
+
 }

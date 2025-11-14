@@ -36,4 +36,10 @@ public interface IUsuarioService
         int empresaId,
         List<CapacidadNivelItem> capacidades
     );
+    //Permite eliminar capacidades creadas para el usuario.
+    Task DeleteMisCapacidadAsync(
+        int usuarioId, 
+        int empresaId, 
+        int capacidadId);
+
 }
